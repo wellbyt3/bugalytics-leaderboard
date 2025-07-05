@@ -1,0 +1,5 @@
+pandas
+trueskill
+google-cloud-bigquery
+python-dotenv
+supabase
