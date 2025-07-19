@@ -1,37 +1,24 @@
-# A Possible Solution For Broken Incentives in Audit Contest
+# Quantifying Security Researcher Skill Using TrueSkill and Contest Performance
 
 **TLDR**
-- Audit contests have contributed immensely to blockchain security, but a recent misalignment of incentives threaten their effectiveness and ultimately weakens security for protocols.
-- One potential solution for realigning incentives is to better educate protocols, security researchers, and contest platforms utilizing real contest data.
-- The critical missing data point is a reliable method for quantifying the skill level of security researchers, which would reveal the talent each contest attracts. Comparing the talent attracted by different contests can help us better understand how to structure contests effectively.
-- I propose using **TrueSkill**, a Microsoft algorithm originally created for ranking gamers (e.g., Call of Duty), adapted specifically for security contests. This repo contains a beta implementation of TrueSkill tuned for this purpose.
-- If you’d rather skip the Python and just view the rankings and scores directly, visit the leaderboard at [bugalytics.xyz/leaderboard](https://bugalytics.xyz/leaderboard).
-- For a lot more context, keep reading...
+I used the TrueSkill algorithm to rank security researchers based on their historical contest performance. See the results at [bugalytics.xyz/leaderboard](https://bugalytics.xyz/leaderboard).
 
 ## Background
-Code4rena’s popularization of security contests marked a pivotal moment in blockchain security. It’s not machines keeping the ecosystem safe (yet), it’s people. Individual security researchers. And audit contests have played a critical role in attracting and onboarding this talent into the space. Many of today's top security researchers got their start on Code4rena or Sherlock.
+Code4rena’s popularization of security contests marked a turning point in blockchain security. It’s not machines keeping the ecosystem safe (yet), it’s people. And audit contests have played a crucial role in attracting and onboarding this talent into the space. Many of today's top security researchers got their start on Code4rena or Sherlock.
 
-When incentives align properly, audit contests consistently deliver the highest quality security due to the sheer number of sharp minds reviewing the code. [One analysis](https://diligence.consensys.io/blog/2024/04/diving-deep-into-audit-contests-analytics-and-economics/) demonstrated it takes an average of 13 people to find all bugs in a codebase — far more than the typical audit firm team of ~4. But today, security contests are struggling to get these incentives right. Conditional pots that guarantee only a fraction of the advertised prize, shrinking rewards relative to the amount of code reviewed, ever-growing and more complex codebases, and "time-boxed bug bounties" disguised as contests have become commonplace. 
+When incentives align properly, audit contests deliver superior security because there are more eyes on the code. [One analysis](https://diligence.consensys.io/blog/2024/04/diving-deep-into-audit-contests-analytics-and-economics/) demonstrated it takes an average of 13 people to find all bugs in a codebase — far more than the typical audit firm team of ~4. But today, security contests are struggling to get these incentives right. Conditional pots that guarantee only a fraction of the advertised prize, shrinking rewards relative to the amount of code reviewed, ever-growing and more complex codebases, and "time-boxed bug bounties" disguised as contests have become commonplace. 
 
-Anyone working in security can see the problem — **when contests fail to attract top talent, protocols get weaker security — and that hurts everyone.**
+The issue is clear — **when contests fail to incentivize top talent, protocols receive weaker security.**
 
-Yet most protocols can't see this clearly. They’re focused on building their product and rely on security providers for guidance on how to approach security. While many firms and platforms operate with high integrity, others do not. Regardless, all are influenced by incentives, which can be at odds with protocols receiving the highest quality and most efficient security outcomes.
+One solution is leveraging historical contest data to measure contest effectiveness. Protocols and contest platforms can use this data to optimize rules, prize amounts, and structures for future contests.
 
-One potential solution is to better educate the customer (i.e. protocol) so they understand what they're buying and why. Currently, most of the information protocols receive comes in the form of opinions from security providers. Sometimes these opinions are credible and accurate, others are not. But we need more than just opinions. We need data.
+I'm currently working on this solution at [bugalytics.xyz](bugalytics.xyz).
 
-Fortunately, this data already exists. It just hasn't yet been presented in a clear, actionable format that provides meaningful insights we as an industry can use. Over the last few weeks, I've been setting up data pipelines, cleaning contest data, and have begun publishing analyses using this data on my Twitter and now bugalytics(dot)xyz. 
+## Quantifying Skill
 
-While analyzing this data, I realized something crucial is missing:
-**A reliable way to quantify the skill of a security researcher.**
+Skill is an interesting dimension to look at contest effectiveness through.
 
-Having this data point unlocks answers to some of our most pressing questions about audit contests:
-- What is the optimal $ per nSLOC to attract a certain skill level of competitor?
-- Which contests attract the highest skilled security researchers?
-- Do conditional pots attract a lower total skill?
-- Does the model of the platforms impact skill attracted?
-- And much, much more.
-
-To fill this gap, I've developed an approach to quantitfying the skill of a security researcher — and the beta version is ready.
+By measuring the skill level of participants, we can better evaluate a contest's overall efficacy.
 
 Enter TrueSkill.
 
@@ -39,28 +26,29 @@ Enter TrueSkill.
 
 TrueSkill, developed by Microsoft Research, is an algorithm originally used to rank gamers (e.g., Call of Duty) based on match outcomes.
 
-Security contests have many similarities to free-for-all Call of Duty matches, so the Trueskill algorithm (with some tweaks) works great for measuring security researcher's skill.
+Security contests have many similarities to free-for-all Call of Duty matches, so the Trueskill algorithm (with some tweaks) works well for quantifying skill.
 
 ### How TrueSkill Works
 
-TrueSkill assigns each researcher a skill level represented as a normal distribution (bell curve). This distribution is represented by:
+TrueSkill assigns each researcher a skill level represented as a normal distribution. This distribution is represented by:
 
 - μ (mu): the researcher’s estimated skill (mean skill level).
 - σ (sigma): the uncertainty around the researcher’s skill. A larger σ indicates greater uncertainty, whereas a smaller σ means greater certainty.
 
 When a researcher participates in a contest, TrueSkill updates their μ and σ based on their performance relative to other participants. Winning increases μ, and consistently strong performances reduce σ.
 
+**The main key takeaway: TrueSkill doesn’t just reward wins, it rewards beating strong opponents.**
+
 ### Why TrueSkill Outperforms Leaderboards at Measuring Skill
 
 Contest platform leaderboards rank security researchers roughly by the amount they've earned. Amount earned correlates to skill, but there are some problems measuring skill this way:
 1. Ignores strength of competition. Earning $20k by beating low-skill opponents is treated the same as earning $20k by outperforming top-tier researchers — even though the latter is a much stronger signal of skill.
 2. Ignores talent dilution from overlapping contests. Winning means less when top researchers are busy elsewhere.
-3. Not all leaderboards are equally competitive. It’s hard to compare the top researcher on one platform to the top of another.
-4. Leaderboards only take into account performance on their platform, but many researchers have competed on multiple platforms.
+3. Certain contests have much less comeptition due to their niche. For example, non-Solidity contests.
+4. Not all leaderboards are equally competitive. It’s hard to compare the top researcher on one platform to the top of another.
+5. Leaderboards only take into account performance on their platform, but many researchers have competed on multiple platforms.
 
-Merging data from all platforms and applying TrueSkill solves these problems, producing a single, consistent skill score and leaderboard for researchers across the entire contest ecosystem.
-
-**The main key takeaway: TrueSkill doesn’t just reward wins, it rewards beating strong opponents.**
+Merging data from all platforms and applying TrueSkill solves a lot of these problems.
 
 ### Tuning TrueSkill For Security Contests
 While security contests have many similarities to games like Call of Duty, there are also some significant differences. Thus, the default TrueSkill parameters require adjustment to account for the unique nuances of security contests.
@@ -94,42 +82,27 @@ Tau applies a slow, steady penalty for inactivity.
 
 This implementation takes the following stance: If you claim to be one of the best, you should prove it a couple times a year in the contest scene. Blockchain security is unique in that it provides this opportunity to literally everyone. If you don’t, contest results (or the lack of them) speak louder than your sales and marketing ever could.
 
-### Additional Modifications
-There are a number of nuances.....
+### Effort
 
-#### Participation Effort
-Sometimes a strong security researcher may spend very little time and do poorly on a contest. That has nothing to do with skill and everything to do with just not investing the time to do well. We don't want these contests impacting the skill rating of some of the best performers. To handle this, the script calculate the total number of contests a security researcher has participated in, then based on this number determines a certain percentage of contest that do not impact their TrueSkill score.
+One significant difference between a security contest and a game like Call of Duty is participant effort. In gaming, player effort remains relatively consistent, while in security contests it varies widely. Even elite researchers can perform poorly simply due to low effort.
 
-Here's the buckets of contests and the percent removed:
-- <= 5: include all
-- 6 to 10: exclude 10%
-- 10 to 20: exclude 15%
-- 20 to 40: exclude 20%
-- 40 to 60: exclude 25% // 45
-- 60 to 80: exclude 30% // 56
-- 80 to 100: exclude 35%
-- 100 to 120: exclude 50%
-- Greater than 120, exclude 60%
+To account for this, the algorithm excludes each researcher's worst contest performances when calculating TrueSkill scores. The more contests a researcher participates in, the higher the exclusion percentage. (See contest-exclusion-percentage.csv for exact details.)
 
-## The bugalytics.xyz Leaderboard
+### Solo Leaderboards
+Occasionally, a researcher might be the only participant listed on a contest leaderboard. In these cases, the algorithm generates simulated participants whose skills match average researcher levels from similar prize pools. This ensures the solo researcher still receives an appropriate TrueSkill adjustment for their performance.
 
-The V1 implementation of TrueSkill is live on bugalytics(dot)xyz as a public leaderboard.
+### Total Earnings
 
-I chose to publish it as a leaderboard for a simple reason: it’s the easiest format for the security researcher community to view, interpret, and give feedback on.
+Currently, the leaderboard at [bugalytics.xyz](bugalytics.xyz/leaderboard) combines TrueSkill scores (weighted 75%) with total contest earnings (weighted 25%). Incorporating earnings smooths out minor discrepancies that arise from directly adapting TrueSkill, originally designed for gaming, to security contests.
 
-So go check it out — and DM me on Twitter or message me on Telegram with your thoughts.
+## Feedback and Contributions
+
+I chose to publish this as a leaderboard because it's an easy format to view, interpret, and give feedback on.
+
+So go check it out — and DM me on Twitter or message me on Telegram (@wellbyt3) with your thoughts.
 
 I’m especially looking for examples where you think the rankings could be improved. If you believe a certain researcher is ranked too high or too low, tell me why — what signals or context might TrueSkill be missing?
 
-While I think this leaderboard is already a better signal of real skill than any contest platform-specific ranking, the leaderboard itself isn’t the point.
-
-The real value comes only if the security researcher community agrees that this is the most credible, directionally accurate representation of skill we have.
-
-If we reach that shared belief, then the underlying scores can be used to analyze contest dynamics, measure platform quality, understand what drives researcher participation and performance — and ultimately, figure out how to deliver the highest level of security to the protocols that rely on us.
-
-I can’t produce meaningful answers unless the community believes in the data. So please: **review the leaderboard, challenge it, help improve it — and let’s make something we all trust.**
-
-## Contributions
 If you're interested in helping me refine this system, contributions are welcome and appreciated.
 
 Here's how to get started:
@@ -143,15 +116,13 @@ The script injests `input-trueskill.csv`, runs the Trueskill algorithm, and then
 - `output-trueskill-history.csv`: the histroical scores after each contest. This gives us a snapshot of skill at a specific point in time, which is important for tracking how skill changes over time and for future analysis.
 
 Here are some TrueSkill resources I found useful when building this:
-- https://www.moserware.com/assets/computing-your-skill/The%20Math%20Behind%20TrueSkill.pdf
-- https://trueskill.org/
-- https://en.wikipedia.org/wiki/TrueSkill
+- [The Math Behind TrueSkill](https://www.moserware.com/assets/computing-your-skill/The%20Math%20Behind%20TrueSkill.pdf)
+- [TrueSkill.org](https://trueskill.org/)
+- [TrueSkill on Wikipedia](https://en.wikipedia.org/wiki/TrueSkill)
 
-DM me on Telegram if you want to collaborate, @wellbyt3.
-
-## Special Thanks
-Highly recommend reading the following:
-- [@joranhonig](https://x.com/joranhonig) for writing ["Diving deep into Audit Contests Analytics and Economics,"](https://diligence.consensys.io/blog/2024/04/diving-deep-into-audit-contests-analytics-and-economics/) which introduced me to TrueSkill.
-- [@0xEV_om](https://x.com/0xEV_om) for writing ["Meritocracy or Mirage? Fixing the Contest Crisis,"](https://x.com/0xEV_om/status/1937537990860927102) which helped a lot in clarifying the problems audit contests currently face.
-- [@jack__sanford](https://x.com/jack__sanford) for writing ["Audit Contests Are Dead, Long Live Audit Contests,"](https://x.com/jack__sanford/status/1920453729603514555) another piece that shines light on the problems contests currently face.
+## Credit
+- [@joranhonig](https://x.com/joranhonig) wrote ["Diving deep into Audit Contests Analytics and Economics,"](https://diligence.consensys.io/blog/2024/04/diving-deep-into-audit-contests-analytics-and-economics/) which introduced me to TrueSkill.
+- [@Guhu95](https://x.com/Guhu95) wrote a piece on [measuring how vulnerable code is after a contest](https://x.com/Guhu95/status/1938224258515448042) and provided a ton of helpful feedback and clarifying thoughts on the nuances of measuring contest efficacy.
+- [@0xEV_om](https://x.com/0xEV_om) wrote ["Meritocracy or Mirage? Fixing the Contest Crisis,"](https://x.com/0xEV_om/status/1937537990860927102) which helped a lot in clarifying the problems audit contests currently face.
+- [@jack__sanford](https://x.com/jack__sanford) wrote ["Audit Contests Are Dead, Long Live Audit Contests,"](https://x.com/jack__sanford/status/1920453729603514555) which is another article that shines light on the problems contests currently face.
 

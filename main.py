@@ -139,7 +139,7 @@ def run_trueskill():
                 contests_to_skip[handle].add(contest_id)
         
     
-    # Second pass: Run TrueSkill algorithm, skipping excluded contests
+    # Second pass: Run TrueSkill algorithm
     for contest_id, cdf in df.groupby("contest_key", sort=False):
         
         # Apply time decay (tau) to all existing ratings before processing contest
@@ -175,9 +175,9 @@ def run_trueskill():
             
             # Create 3 fake participants with slightly worse ratings
             fake_ratings = [
-                Rating(avg_mu - 2, avg_sigma * 1.1),  # 2nd place fake participant
-                Rating(avg_mu - 4, avg_sigma * 1.2),  # 3rd place fake participant
-                Rating(avg_mu - 6, avg_sigma * 1.3)   # 4th place fake participant
+                Rating(avg_mu - 2, avg_sigma * 1.1), 
+                Rating(avg_mu - 4, avg_sigma * 1.2), 
+                Rating(avg_mu - 6, avg_sigma * 1.3) 
             ]
             
             # Add fake teams (one participant per team)
@@ -210,7 +210,7 @@ def run_trueskill():
                 if h in place_counts:
                     place_counts[h][place] += 1
         
-        # Count top 5 finishes (includes 1st through 5th)
+        # Count top 5 finishes
         for i in range(min(5, len(unique_ranks))):
             rank_val = unique_ranks[i]
             handles_in_rank = cdf.loc[cdf["handle_rank"] == rank_val, "handle"]
@@ -218,7 +218,7 @@ def run_trueskill():
                 if h in place_counts:
                     place_counts[h]["top_5"] += 1
         
-        # Count top 10 finishes (includes 1st through 10th)
+        # Count top 10 finishes
         for i in range(min(10, len(unique_ranks))):
             rank_val = unique_ranks[i]
             handles_in_rank = cdf.loc[cdf["handle_rank"] == rank_val, "handle"]
