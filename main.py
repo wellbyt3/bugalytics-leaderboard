@@ -1,5 +1,7 @@
 import pandas as pd
 from trueskill import TrueSkill, Rating
+import math
+import numpy as np
 
 # Set TrueSkill parameters
 MU_0 = 23.0 
@@ -11,33 +13,20 @@ C = 4.5
 # A draw is the situation where the performance difference between two teams is so small that no winner can be declared. This implementation assumes that if you're ranked higher on the final leaderboard of a contest, then you are the winner (even if there's a $0.01 difference). The input-trueskill.csv file takes into account draws when a draw actually occurs by treating the participants that tie as a team. 
 DRAW_P = 0.0
 
-# Iput and output CSVs
-CSV_IN = "input-trueskill.csv"
-CSV_OUT = "output-trueskill.csv"
-CSV_HISTORY = "output-trueskill-history.csv"
-
-# TrueSkill environment
-env = TrueSkill(mu=MU_0,
-                sigma=SIGMA_0,
-                beta=BETA,
-                tau=TAU,
-                draw_probability=DRAW_P)
-
 # Calculate reorientation offset. This is added to the TrueSkill score to prevent so many negative scores, though scores are relative so it doesn't really matter.
 REORIENTATION_OFFSET = abs(MU_0 - C * SIGMA_0)
 
-# Read in the input CSV
-df = pd.read_csv(CSV_IN, parse_dates=["start_date"])
+# TrueSkill environment
+env = TrueSkill(mu=MU_0,
+    sigma=SIGMA_0,
+    beta=BETA,
+    tau=TAU,
+    draw_probability=DRAW_P
+)
 
-# Unique identifier for each contest
-df["contest_key"] = df["platform"].astype(str) + "-" + df["contest_id"].astype(str)
-
-# Drop contests with ≤1 entrant. TrueSkill needs at least two participants. It's not fair to not give any ranking benefit to winners when they are the only person to find a bug. In the future, I'm planning on implementing logic that provides these winners a boost in skill scoring by creating fake competitors utilizing averages across pot size and time period. There are only a handful of these contest, so for the first iteration of this, it's easier to just exclude them.
-cnts = df["contest_key"].value_counts()
-df = df[df["contest_key"].isin(cnts[cnts > 1].index)]
-
-# Process contests in order of the date they started.
-df = df.sort_values("start_date")
+# Blended scoring weights
+WEIGHT_TRUESKILL = 0.75
+WEIGHT_EARNINGS = 0.25
 
 # Dictionaries to store data for leaderboard
 ratings = dict() 
@@ -48,6 +37,7 @@ mediums_count = dict()
 highs_count = dict()  
 total_hms_count = dict()  
 historical_snapshots = []  
+
 
 def get_rating(handle: str) -> Rating:
     if handle not in place_counts:
@@ -63,66 +53,137 @@ def get_rating(handle: str) -> Rating:
     if handle not in total_hms_count:
         total_hms_count[handle] = 0
     return ratings.setdefault(handle, env.create_rating())
+    
 
-# At some point, I want to implement some sort of tiering system that is based on how many standard deviations above the mean a researcher is (prevent sybil attacks that would be possible if we took the top 1% or something). For now, using TBD as a placeholder. Any ideas here are welcome!
-def get_tier(score: float, mean: float, std: float) -> str:
-    if score >= mean + 2 * std:
-        return "TBD"
-    elif score >= mean + 1.5 * std:
-        return "TBD"
-    elif score >= mean + 1 * std:
-        return "TBD"
-    elif score >= mean + 0.5 * std:
-        return "TBD"
+def get_pot_size_range(pot_size):
+    """Categorize pot size into ranges"""
+    if pot_size < 50000:
+        return "0-50k"
+    elif pot_size < 100000:
+        return "50k-100k"
+    elif pot_size < 250000:
+        return "100k-250k"
     else:
-        return "TBD"
-        
-def add_historical_statistics(df):
-    result_dfs = []
-    
-    for contest_key, group in df.groupby("contest_key", sort=False):
-        # Calculate mean and std for this contest's snapshot
-        mean_score = group["score"].mean()
-        std_score = group["score"].std()
-        
-        # Calculate tier cutoffs
-        cutoff_1 = mean_score + 2 * std_score
-        cutoff_2 = mean_score + 1.5 * std_score
-        cutoff_3 = mean_score + 1 * std_score
-        cutoff_4 = mean_score + 0.5 * std_score
-        
-        # Add columns to group
-        group = group.copy()
-        group["tier"] = group["score"].apply(lambda x: get_tier(x, mean_score, std_score))
-        group["mean"] = mean_score
-        group["std"] = std_score
-        group["cutoff_1"] = cutoff_1
-        group["cutoff_2"] = cutoff_2
-        group["cutoff_3"] = cutoff_3
-        group["cutoff_4"] = cutoff_4
-        
-        result_dfs.append(group)
-    
-    return pd.concat(result_dfs, ignore_index=True)
+        return "250k+"
 
-def main():
-    # Iterate over each contest and build the historical snapshot
+def run_trueskill():
+    df = pd.read_csv("input-trueskill.csv")
+
+    # Unique identifier for each contest
+    df["contest_key"] = df["platform"].astype(str) + "-" + df["contest_id"].astype(str)
+
+    # Store average ratings by pot size range
+    pot_size_ratings = {
+        "0-50k": [],
+        "50k-100k": [],
+        "100k-250k": [],
+        "250k+": []
+    }
+
+
+    # Process contests in order of the date they started.
+    df = df.sort_values("start_date")
+
+    player_contest_scores = {}  
+    contests_to_skip = {} 
+    
+    print("First pass: Analyzing player performances...")
+    
+    
+    # Collect all contest performances for each player
+    for contest_id, cdf in df.groupby("contest_key", sort=False):
+        # Skip contests with only one team
+        unique_ranks = cdf["handle_rank"].unique()
+        if len(unique_ranks) < 2:
+            continue
+            
+        for _, row in cdf.iterrows():
+            handle = row["handle"]
+            rank = row["handle_rank"]
+            
+            if handle not in player_contest_scores:
+                player_contest_scores[handle] = []
+            
+            # Store contest performance (we'll calculate score based on rank)
+            # Lower rank is better (1st place = rank 1)
+            player_contest_scores[handle].append((contest_id, rank))
+    
+    # Determine which contests to skip for each player
+    for handle, performances in player_contest_scores.items():
+        num_contests = len(performances)
+        
+        # Determine exclusion percentage based on contest count
+        if num_contests <= 5:
+            exclude_pct = 0.0  # Don't exclude any
+        elif num_contests > 5 and num_contests <= 100:
+            # Start at 10% for 6 contests, add 0.5% for each contest beyond 6
+            exclude_pct = 0.10 + (num_contests - 6) * 0.005
+        elif num_contests > 100 and num_contests <= 145:
+            # Start at 57% for 101 contests, add 0.25% for each contest beyond 100
+            exclude_pct = 0.57 + (num_contests - 100) * 0.0025
+        else:
+            # Stop at 68.25%
+            exclude_pct = 0.6825
+        
+        if exclude_pct > 0:
+            # Sort by rank (descending - worst performances have highest rank numbers)
+            sorted_performances = sorted(performances, key=lambda x: x[1], reverse=True)
+            
+            # Calculate how many to exclude (round up)
+            num_to_exclude = math.ceil(num_contests * exclude_pct)
+            
+            # Get the contest IDs to skip
+            contests_to_skip[handle] = set()
+            for i in range(num_to_exclude):
+                contest_id = sorted_performances[i][0]
+                contests_to_skip[handle].add(contest_id)
+        
+    
+    # Second pass: Run TrueSkill algorithm, skipping excluded contests
     for contest_id, cdf in df.groupby("contest_key", sort=False):
         
-        # Adds the time decay, so SRs are slightly penalized for inactivity.
+        # Apply time decay (tau) to all existing ratings before processing contest
         for h, r in ratings.items():
             ratings[h] = Rating(r.mu, (r.sigma ** 2 + TAU ** 2) ** 0.5)
         
+        # Get contest pot size
+        pot_size = cdf["total_rewards_advertised_usd"].iloc[0]
+        pot_range = get_pot_size_range(pot_size)
+        
+        # Filter out players who should skip this contest
+        filtered_cdf = cdf[~cdf['handle'].apply(lambda h: h in contests_to_skip and contest_id in contests_to_skip[h])]
+        
         # Builds "teams" for TrueSkill. When there's a draw, SRs are put into the same team.
         teams = []
-        for rank_val in sorted(cdf["handle_rank"].unique()):
-            handles_in_rank = cdf.loc[cdf["handle_rank"] == rank_val, "handle"]
+        team_to_handles = []  # Keep track of handles for each team
+        for rank_val in sorted(filtered_cdf["handle_rank"].unique()):
+            handles_in_rank = filtered_cdf.loc[filtered_cdf["handle_rank"] == rank_val, "handle"]
             teams.append([get_rating(h) for h in handles_in_rank])
-
-        # Skip contests with only one "team"
-        if len(teams) < 2:
-            print(f"Skipping contest {contest_id} with only {len(teams)} team(s)")
-            continue
+            team_to_handles.append(list(handles_in_rank))
+        
+        # If only one team, create fake participants based on pot size averages
+        if len(teams) == 1:
+            # Get average rating for this pot size range
+            if pot_size_ratings[pot_range]:
+                # Calculate average mu and sigma from ratings in this pot range
+                avg_mu = sum(r.mu for r in pot_size_ratings[pot_range]) / len(pot_size_ratings[pot_range])
+                avg_sigma = sum(r.sigma for r in pot_size_ratings[pot_range]) / len(pot_size_ratings[pot_range])
+            else:
+                # Use default rating if no data yet for this pot range
+                avg_mu = MU_0
+                avg_sigma = SIGMA_0
+            
+            # Create 3 fake participants with slightly worse ratings
+            fake_ratings = [
+                Rating(avg_mu - 2, avg_sigma * 1.1),  # 2nd place fake participant
+                Rating(avg_mu - 4, avg_sigma * 1.2),  # 3rd place fake participant
+                Rating(avg_mu - 6, avg_sigma * 1.3)   # 4th place fake participant
+            ]
+            
+            # Add fake teams (one participant per team)
+            for fake_rating in fake_ratings:
+                teams.append([fake_rating])
+                team_to_handles.append([f"FAKE_{pot_range}_{len(teams)}"])
 
         # Get contest participation, accumulate earnings, and findings
         for _, row in cdf.iterrows():
@@ -149,30 +210,37 @@ def main():
                 if h in place_counts:
                     place_counts[h][place] += 1
         
-        # Count 4th-5th place finishes (top_5)
-        for i in range(3, min(5, len(unique_ranks))):
+        # Count top 5 finishes (includes 1st through 5th)
+        for i in range(min(5, len(unique_ranks))):
             rank_val = unique_ranks[i]
             handles_in_rank = cdf.loc[cdf["handle_rank"] == rank_val, "handle"]
             for h in handles_in_rank:
                 if h in place_counts:
                     place_counts[h]["top_5"] += 1
         
-        # Count 6th-10th place finishes (top_10)
-        for i in range(5, min(10, len(unique_ranks))):
+        # Count top 10 finishes (includes 1st through 10th)
+        for i in range(min(10, len(unique_ranks))):
             rank_val = unique_ranks[i]
             handles_in_rank = cdf.loc[cdf["handle_rank"] == rank_val, "handle"]
             for h in handles_in_rank:
                 if h in place_counts:
                     place_counts[h]["top_10"] += 1
 
+
         # Update ratings
         new_teams = env.rate(teams, ranks=None) 
         
-        # Write back the new ratings
-        for rank_val, team_ratings in zip(sorted(cdf["handle_rank"].unique()), new_teams):
-            handles_in_rank = cdf.loc[cdf["handle_rank"] == rank_val, "handle"]
-            for h, new_r in zip(handles_in_rank, team_ratings):
-                ratings[h] = new_r
+        # Write back the new ratings (pure TrueSkill)
+        for team_handles, team_ratings in zip(team_to_handles, new_teams):
+            for h, new_r in zip(team_handles, team_ratings):
+                # Skip if handle is NaN or not a string
+                if pd.isna(h) or not isinstance(h, str):
+                    continue
+                if not h.startswith("FAKE_"):  # Only update real players
+                    ratings[h] = new_r
+                    # Collect ratings for pot size averaging (exclude first contest to avoid default ratings)
+                    if contest_counts.get(h, 0) > 0:
+                        pot_size_ratings[pot_range].append(new_r)
         
         # Capture snapshot after this contest
         contest_date = cdf["start_date"].iloc[0]
@@ -200,53 +268,71 @@ def main():
 
     # Now that we've iterated over all contests, we can build the final leaderboard.
     rows = []
+    
+    # First, calculate raw scores for each component
     for handle, r in ratings.items():
-        score = r.mu - C * r.sigma + REORIENTATION_OFFSET
-        rows.append({"handle": handle,
-                    "mu": r.mu,
-                    "sigma": r.sigma,
-                    "score": score,
-                    "contests": contest_counts.get(handle, 0),
-                    "1st_place_finishes": place_counts.get(handle, {}).get("1st", 0),
-                    "2nd_place_finishes": place_counts.get(handle, {}).get("2nd", 0),
-                    "3rd_place_finishes": place_counts.get(handle, {}).get("3rd", 0),
-                    "top_5": place_counts.get(handle, {}).get("top_5", 0),
-                    "top_10": place_counts.get(handle, {}).get("top_10", 0),
-                    "total_earned": total_earnings.get(handle, 0.0),
-                    "mediums": mediums_count.get(handle, 0),
-                    "highs": highs_count.get(handle, 0),
-                    "total_hms": total_hms_count.get(handle, 0)})
+        # TrueSkill score
+        trueskill_score = r.mu - C * r.sigma + REORIENTATION_OFFSET
+        
+        # Placement score (weighted sum of top finishes)
+        firsts = place_counts.get(handle, {}).get("1st", 0)
+        seconds = place_counts.get(handle, {}).get("2nd", 0)
+        thirds = place_counts.get(handle, {}).get("3rd", 0)
+        
+        # Earnings score
+        total_earned = total_earnings.get(handle, 0.0)
 
-    out_df = (pd.DataFrame(rows).sort_values("score", ascending=False).reset_index(drop=True))
-
-    # Calculate statistics for final leaderboard
-    mean_score = out_df["score"].mean()
-    std_score = out_df["score"].std()
-
-    # Calculate tier cutoffs
-    cutoff_1 = mean_score + 2 * std_score
-    cutoff_2 = mean_score + 1.5 * std_score
-    cutoff_3 = mean_score + 1 * std_score
-    cutoff_4 = mean_score + 0.5 * std_score
-
-    # Add tier and statistics columns
-    out_df["tier"] = out_df["score"].apply(lambda x: get_tier(x, mean_score, std_score))
-    out_df["mean"] = mean_score
-    out_df["std"] = std_score
-    out_df["cutoff_1"] = cutoff_1
-    out_df["cutoff_2"] = cutoff_2
-    out_df["cutoff_3"] = cutoff_3
-    out_df["cutoff_4"] = cutoff_4
-
-    # Write final leaderboard to CSV
-    out_df.to_csv(CSV_OUT, index=False)
-    print(f"Written {CSV_OUT} with {len(out_df)} researchers.")
+        # Does NOT include LSW fixed pay
+        earnings_score = total_earned
+        
+        rows.append({
+            "handle": handle,
+            "mu": r.mu,
+            "sigma": r.sigma,
+            "trueskill_score": trueskill_score,
+            "earnings_score": earnings_score,
+            "contests": contest_counts.get(handle, 0),
+            "1st_place_finishes": firsts,
+            "2nd_place_finishes": seconds,
+            "3rd_place_finishes": thirds,
+            "top_5": place_counts.get(handle, {}).get("top_5", 0),
+            "top_10": place_counts.get(handle, {}).get("top_10", 0),
+            "total_earned": total_earned,
+            "mediums": mediums_count.get(handle, 0),
+            "highs": highs_count.get(handle, 0),
+            "total_hms": total_hms_count.get(handle, 0)
+        })
+    
+    # Convert to DataFrame for easier manipulation
+    df_scores = pd.DataFrame(rows)
+    
+    # Normalize each component to 0-100 scale using percentile ranks
+    df_scores['trueskill_pct'] = df_scores['trueskill_score'].rank(pct=True) * 100
+    df_scores['earnings_pct'] = df_scores['earnings_score'].rank(pct=True) * 100
+    
+    # Calculate blended score
+    df_scores['score'] = (
+        df_scores['trueskill_pct'] * WEIGHT_TRUESKILL +
+        df_scores['earnings_pct'] * WEIGHT_EARNINGS
+    )
+    
+    # Sort by blended score (descending order - highest score first)
+    out_df = df_scores.sort_values('score', ascending=False).reset_index(drop=True)
 
     # Write historical leaderboard to CSV
     history_df = pd.DataFrame(historical_snapshots)
-    history_df = add_historical_statistics(history_df)
-    history_df.to_csv(CSV_HISTORY, index=False)
-    print(f"Written {CSV_HISTORY} with {len(history_df)} historical records.")
+
+    return out_df, history_df
+
+def main():
+    out_df, history_df = run_trueskill()
+    out_df.to_csv("output-trueskill.csv", index=False)
+    print(f"Written output-trueskill.csv with {len(out_df)} researchers.")
+
+    # Write historical leaderboard to CSV
+    history_df = pd.DataFrame(historical_snapshots)
+    history_df.to_csv("output-trueskill-history.csv", index=False)
+    print(f"Written output-trueskill-history.csv with {len(history_df)} historical records.")
 
 if __name__ == "__main__":
     main()
